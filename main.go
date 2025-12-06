@@ -148,10 +148,10 @@ func (m model) View() string {
 	}
 
 	// Calculate heights for stacked layout
-	// CPU header + chart + Token header + chart + footer
-	// Minimum: 1 + 1 + 1 + 1 + 1 = 5 rows
-	tokChartHeight := 1                      // tokens are discrete, one line enough
-	cpuChartHeight := m.height - 3 - tokChartHeight // CPU gets the rest
+	// CPU chart (header embedded) + Token header + Token chart + footer
+	// Minimum: 1 + 1 + 1 + 1 = 4 rows
+	tokChartHeight := 1                              // tokens are discrete, one line enough
+	cpuChartHeight := m.height - 2 - tokChartHeight // CPU gets the rest (-2 for tok header + footer)
 	if cpuChartHeight < 1 {
 		cpuChartHeight = 1
 	}
@@ -167,9 +167,9 @@ func (m model) View() string {
 		userStyle.Render("■") + dimStyle.Render("usr ") +
 		systemStyle.Render("■") + dimStyle.Render("sys ") +
 		iowaitStyle.Render("■") + dimStyle.Render("io ") +
-		stealStyle.Render("■") + dimStyle.Render("stl")
+		stealStyle.Render("■") + dimStyle.Render("stl ")
 
-	cpuChart := renderCPUChart(m.cpuHistory, m.width, cpuChartHeight)
+	cpuChart := renderCPUChart(m.cpuHistory, m.width, cpuChartHeight, cpuHeader)
 
 	// Token section - show cumulative total, chart shows deltas over time
 	var tokTotal uint64
@@ -194,7 +194,7 @@ func (m model) View() string {
 	}
 	footer += dimStyle.Render(span + " ")
 
-	return cpuHeader + "\n" + cpuChart + "\n" + tokHeader + "\n" + tokChart + "\n" + footer
+	return cpuChart + "\n" + tokHeader + "\n" + tokChart + "\n" + footer
 }
 
 func formatCount(n uint64) string {
@@ -214,10 +214,11 @@ func formatDuration(seconds int) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
-func renderCPUChart(history []CPUSample, width, height int) string {
+func renderCPUChart(history []CPUSample, width, height int, header string) string {
 	if height < 1 {
 		return ""
 	}
+	headerWidth := lipgloss.Width(header)
 
 	padded := make([]CPUSample, width)
 	start := width - len(history)
@@ -294,6 +295,11 @@ func renderCPUChart(history []CPUSample, width, height int) string {
 	for y := 0; y < height; y++ {
 		var row strings.Builder
 		x := 0
+		// Embed header in top row
+		if y == 0 && header != "" {
+			row.WriteString(header)
+			x = headerWidth
+		}
 		for x < width {
 			// Check if there's an annotation starting here
 			label, hasLabel := annotations[x]
