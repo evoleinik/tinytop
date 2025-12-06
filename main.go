@@ -237,7 +237,7 @@ func renderCPUChart(history []CPUSample, width, height int) string {
 			break
 		}
 	}
-	if lastIdx >= 0 && totals[lastIdx] > 0 {
+	if lastIdx >= 0 && totals[lastIdx] >= 20 {
 		// Add current value if not already a peak
 		found := false
 		for _, p := range peaks {
