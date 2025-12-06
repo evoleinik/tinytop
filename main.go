@@ -24,8 +24,8 @@ var (
 
 // Styles - Token colors
 var (
-	inputStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))  // blue
-	outputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))  // cyan
+	inputStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // orange (prompt)
+	outputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("35"))  // teal (response)
 	cacheRStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // gray
 	cacheWStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")) // white
 )
