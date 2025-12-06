@@ -10,6 +10,7 @@ Tiny terminal CPU monitor with Unicode graphics. Designed for small terminals ov
 - **Tokens**: Claude Code token usage - input/prompt (brown), output/response (cyan), cache (gray)
 - Plan 9-inspired color palette (muted acme colors)
 - Peak annotations showing CPU % at significant spikes
+- Variable time scales: 1s, 2s, 5s, 10s, 30s, 60s per column
 - Unicode block characters for sub-character resolution
 - Adapts to terminal size
 - 1-second refresh rate (SSH-friendly)
@@ -31,7 +32,10 @@ GOOS=linux GOARCH=amd64 go build -o tinytop
 ./tinytop
 ```
 
-Press `q` or `Ctrl+C` to quit.
+Keys:
+- `q` or `Ctrl+C` - quit
+- `+` - zoom out (more time per column)
+- `-` - zoom in (less time per column)
 
 ## Claude Code Token Tracking
 
