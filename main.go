@@ -187,11 +187,12 @@ func (m model) View() string {
 
 	// Footer
 	footer := dimStyle.Render(" q:quit")
-	pad := m.width - 7 - 3
+	span := formatDuration(m.width)
+	pad := m.width - 7 - len(span) - 1
 	if pad > 0 {
 		footer += strings.Repeat(" ", pad)
 	}
-	footer += dimStyle.Render("1s ")
+	footer += dimStyle.Render(span + " ")
 
 	return cpuHeader + "\n" + cpuChart + "\n" + tokHeader + "\n" + tokChart + "\n" + footer
 }
@@ -204,6 +205,13 @@ func formatCount(n uint64) string {
 		return fmt.Sprintf("%.1fk", float64(n)/1_000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+func formatDuration(seconds int) string {
+	if seconds >= 60 {
+		return fmt.Sprintf("%dm", seconds/60)
+	}
+	return fmt.Sprintf("%ds", seconds)
 }
 
 func renderCPUChart(history []CPUSample, width, height int) string {
