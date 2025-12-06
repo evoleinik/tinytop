@@ -13,13 +13,21 @@ import (
 // Block characters for rendering
 var blocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
-// Styles - Datadog-inspired colors
+// Styles - CPU colors (Datadog-inspired)
 var (
 	userStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // bright green
 	systemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // bright red
 	iowaitStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // bright yellow
 	stealStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("201")) // magenta
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240")) // gray
+)
+
+// Styles - Token colors
+var (
+	inputStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("33"))  // blue
+	outputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("51"))  // cyan
+	cacheRStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // gray
+	cacheWStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")) // white
 )
 
 // CPUSample holds calculated CPU percentages
@@ -30,18 +38,29 @@ type CPUSample struct {
 	Steal  float64
 }
 
+// Global OTEL receiver
+var otelReceiver *OTELReceiver
+
 // model is the Bubbletea model
 type model struct {
-	history []CPUSample
-	prev    cpuRaw
-	width   int
-	height  int
-	err     error
+	cpuHistory   []CPUSample
+	tokenHistory []TokenSample
+	prevCPU      cpuRaw
+	prevToken    TokenSample
+	width        int
+	height       int
+	err          error
 }
 
 type tickMsg time.Time
 
 func main() {
+	// Start OTEL receiver in background (gRPC on default OTLP port)
+	otelReceiver = NewOTELReceiver(":4317")
+	go func() {
+		otelReceiver.Start() // Ignore error, optional feature
+	}()
+
 	p := tea.NewProgram(model{}, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -72,25 +91,48 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 
 	case tickMsg:
+		// Update CPU
 		curr, err := readCPU()
 		if err != nil {
 			m.err = err
 			return m, tick()
 		}
 
-		if m.prev.total() > 0 {
-			sample := calcPercentages(m.prev, curr)
-			m.history = append(m.history, sample)
+		if m.prevCPU.total() > 0 {
+			sample := calcPercentages(m.prevCPU, curr)
+			m.cpuHistory = append(m.cpuHistory, sample)
 
 			maxHist := m.width
 			if maxHist < 10 {
 				maxHist = 80
 			}
-			if len(m.history) > maxHist {
-				m.history = m.history[len(m.history)-maxHist:]
+			if len(m.cpuHistory) > maxHist {
+				m.cpuHistory = m.cpuHistory[len(m.cpuHistory)-maxHist:]
 			}
 		}
-		m.prev = curr
+		m.prevCPU = curr
+
+		// Update token history (deltas from cumulative OTEL values)
+		if otelReceiver != nil {
+			curr := otelReceiver.GetSample()
+			delta := TokenSample{
+				Input:      curr.Input - m.prevToken.Input,
+				Output:     curr.Output - m.prevToken.Output,
+				CacheRead:  curr.CacheRead - m.prevToken.CacheRead,
+				CacheWrite: curr.CacheWrite - m.prevToken.CacheWrite,
+			}
+			// Add delta to history (even if zero - shows no activity)
+			m.tokenHistory = append(m.tokenHistory, delta)
+			maxHist := m.width
+			if maxHist < 10 {
+				maxHist = 80
+			}
+			if len(m.tokenHistory) > maxHist {
+				m.tokenHistory = m.tokenHistory[len(m.tokenHistory)-maxHist:]
+			}
+			m.prevToken = curr
+		}
+
 		return m, tick()
 	}
 	return m, nil
@@ -105,25 +147,46 @@ func (m model) View() string {
 		return fmt.Sprintf("Error: %v", m.err)
 	}
 
-	var latest CPUSample
-	if len(m.history) > 0 {
-		latest = m.history[len(m.history)-1]
+	// Calculate heights for stacked layout
+	// CPU header + chart + Token header + chart + footer
+	// Minimum: 1 + 1 + 1 + 1 + 1 = 5 rows
+	cpuChartHeight := (m.height - 3) / 2 // -3 for headers and footer
+	tokChartHeight := m.height - 3 - cpuChartHeight
+	if cpuChartHeight < 1 {
+		cpuChartHeight = 1
 	}
-	total := latest.User + latest.System + latest.IOWait + latest.Steal
+	if tokChartHeight < 1 {
+		tokChartHeight = 1
+	}
 
-	// Header
-	header := fmt.Sprintf(" CPU %3.0f%% ", total) +
+	// CPU section
+	var latestCPU CPUSample
+	if len(m.cpuHistory) > 0 {
+		latestCPU = m.cpuHistory[len(m.cpuHistory)-1]
+	}
+	cpuTotal := latestCPU.User + latestCPU.System + latestCPU.IOWait + latestCPU.Steal
+
+	cpuHeader := fmt.Sprintf(" CPU %3.0f%% ", cpuTotal) +
 		userStyle.Render("■") + dimStyle.Render("usr ") +
 		systemStyle.Render("■") + dimStyle.Render("sys ") +
 		iowaitStyle.Render("■") + dimStyle.Render("io ") +
 		stealStyle.Render("■") + dimStyle.Render("stl")
 
-	// Chart
-	chartHeight := m.height - 2
-	if chartHeight < 1 {
-		chartHeight = 1
+	cpuChart := renderCPUChart(m.cpuHistory, m.width, cpuChartHeight)
+
+	// Token section - show cumulative total, chart shows deltas over time
+	var tokTotal uint64
+	if otelReceiver != nil {
+		curr := otelReceiver.GetSample()
+		tokTotal = curr.Input + curr.Output + curr.CacheRead + curr.CacheWrite
 	}
-	chart := renderChart(m.history, m.width, chartHeight)
+	tokHeader := fmt.Sprintf(" TOK %s ", formatCount(tokTotal)) +
+		inputStyle.Render("■") + dimStyle.Render("in ") +
+		outputStyle.Render("■") + dimStyle.Render("out ") +
+		cacheRStyle.Render("■") + dimStyle.Render("chr ") +
+		cacheWStyle.Render("■") + dimStyle.Render("chw")
+
+	tokChart := renderTokenChart(m.tokenHistory, m.width, tokChartHeight)
 
 	// Footer
 	footer := dimStyle.Render(" q:quit")
@@ -133,10 +196,20 @@ func (m model) View() string {
 	}
 	footer += dimStyle.Render("1s ")
 
-	return header + "\n" + chart + "\n" + footer
+	return cpuHeader + "\n" + cpuChart + "\n" + tokHeader + "\n" + tokChart + "\n" + footer
 }
 
-func renderChart(history []CPUSample, width, height int) string {
+func formatCount(n uint64) string {
+	if n >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	}
+	if n >= 1_000 {
+		return fmt.Sprintf("%.1fk", float64(n)/1_000)
+	}
+	return fmt.Sprintf("%d", n)
+}
+
+func renderCPUChart(history []CPUSample, width, height int) string {
 	if height < 1 {
 		return ""
 	}
@@ -153,7 +226,7 @@ func renderChart(history []CPUSample, width, height int) string {
 	for y := 0; y < height; y++ {
 		var row strings.Builder
 		for x := 0; x < width; x++ {
-			char, style := getCell(padded[x], y, height)
+			char, style := getCPUCell(padded[x], y, height)
 			row.WriteString(style.Render(string(char)))
 		}
 		rows[y] = row.String()
@@ -162,7 +235,7 @@ func renderChart(history []CPUSample, width, height int) string {
 	return strings.Join(rows, "\n")
 }
 
-func getCell(s CPUSample, row, totalRows int) (rune, lipgloss.Style) {
+func getCPUCell(s CPUSample, row, totalRows int) (rune, lipgloss.Style) {
 	maxUnits := totalRows * 8
 
 	userUnits := int(s.User * float64(maxUnits) / 100)
@@ -177,15 +250,12 @@ func getCell(s CPUSample, row, totalRows int) (rune, lipgloss.Style) {
 
 	rowBottom := (totalRows - 1 - row) * 8
 
-	// Empty if row is above the entire stack
 	if rowBottom >= stealTop {
 		return ' ', lipgloss.NewStyle()
 	}
 
-	// Fill extends to top of entire stack (not just current layer)
 	fill := min(stealTop-rowBottom, 8)
 
-	// Color based on which layer this row starts in
 	var style lipgloss.Style
 	switch {
 	case rowBottom < userTop:
@@ -196,6 +266,84 @@ func getCell(s CPUSample, row, totalRows int) (rune, lipgloss.Style) {
 		style = iowaitStyle
 	default:
 		style = stealStyle
+	}
+
+	return blocks[fill], style
+}
+
+func renderTokenChart(history []TokenSample, width, height int) string {
+	if height < 1 {
+		return ""
+	}
+
+	padded := make([]TokenSample, width)
+	start := width - len(history)
+	if start < 0 {
+		copy(padded, history[len(history)-width:])
+	} else {
+		copy(padded[start:], history)
+	}
+
+	// Find max for scaling
+	var maxTokens uint64 = 1
+	for _, s := range padded {
+		total := s.Input + s.Output + s.CacheRead + s.CacheWrite
+		if total > maxTokens {
+			maxTokens = total
+		}
+	}
+
+	rows := make([]string, height)
+	for y := 0; y < height; y++ {
+		var row strings.Builder
+		for x := 0; x < width; x++ {
+			char, style := getTokenCell(padded[x], y, height, maxTokens)
+			row.WriteString(style.Render(string(char)))
+		}
+		rows[y] = row.String()
+	}
+
+	return strings.Join(rows, "\n")
+}
+
+func getTokenCell(s TokenSample, row, totalRows int, maxTokens uint64) (rune, lipgloss.Style) {
+	maxUnits := totalRows * 8
+
+	scale := func(v uint64) int {
+		if maxTokens == 0 {
+			return 0
+		}
+		return int(float64(v) * float64(maxUnits) / float64(maxTokens))
+	}
+
+	inputUnits := scale(s.Input)
+	outputUnits := scale(s.Output)
+	cacheRUnits := scale(s.CacheRead)
+	cacheWUnits := scale(s.CacheWrite)
+
+	inputTop := inputUnits
+	outputTop := inputTop + outputUnits
+	cacheRTop := outputTop + cacheRUnits
+	cacheWTop := cacheRTop + cacheWUnits
+
+	rowBottom := (totalRows - 1 - row) * 8
+
+	if rowBottom >= cacheWTop {
+		return ' ', lipgloss.NewStyle()
+	}
+
+	fill := min(cacheWTop-rowBottom, 8)
+
+	var style lipgloss.Style
+	switch {
+	case rowBottom < inputTop:
+		style = inputStyle
+	case rowBottom < outputTop:
+		style = outputStyle
+	case rowBottom < cacheRTop:
+		style = cacheRStyle
+	default:
+		style = cacheWStyle
 	}
 
 	return blocks[fill], style
