@@ -150,13 +150,10 @@ func (m model) View() string {
 	// Calculate heights for stacked layout
 	// CPU header + chart + Token header + chart + footer
 	// Minimum: 1 + 1 + 1 + 1 + 1 = 5 rows
-	cpuChartHeight := (m.height - 3) / 2 // -3 for headers and footer
-	tokChartHeight := m.height - 3 - cpuChartHeight
+	tokChartHeight := 1                      // tokens are discrete, one line enough
+	cpuChartHeight := m.height - 3 - tokChartHeight // CPU gets the rest
 	if cpuChartHeight < 1 {
 		cpuChartHeight = 1
-	}
-	if tokChartHeight < 1 {
-		tokChartHeight = 1
 	}
 
 	// CPU section
@@ -222,17 +219,105 @@ func renderCPUChart(history []CPUSample, width, height int) string {
 		copy(padded[start:], history)
 	}
 
+	// Calculate total CPU % for each column
+	totals := make([]int, width)
+	for x := 0; x < width; x++ {
+		s := padded[x]
+		totals[x] = int(s.User + s.System + s.IOWait + s.Steal)
+	}
+
+	// Find peaks: local maxima that are significant (>20% and higher than neighbors by 5%)
+	peaks := findPeaks(totals, 20, 5)
+
+	// Also always show current value (rightmost with data)
+	lastIdx := -1
+	for x := width - 1; x >= 0; x-- {
+		if totals[x] > 0 {
+			lastIdx = x
+			break
+		}
+	}
+	if lastIdx >= 0 && totals[lastIdx] > 0 {
+		// Add current value if not already a peak
+		found := false
+		for _, p := range peaks {
+			if p == lastIdx {
+				found = true
+				break
+			}
+		}
+		if !found {
+			peaks = append(peaks, lastIdx)
+		}
+	}
+
+	// Build annotation map: column -> label (avoid collisions)
+	annotations := make(map[int]string)
+	for _, p := range peaks {
+		label := fmt.Sprintf("%d", totals[p])
+		// Check for collision (need 2-3 chars space)
+		collision := false
+		for ox := p - len(label); ox <= p+len(label); ox++ {
+			if _, exists := annotations[ox]; exists {
+				collision = true
+				break
+			}
+		}
+		if !collision {
+			annotations[p] = label
+		}
+	}
+
+	// Calculate which row each peak label should appear in
+	peakRows := make(map[int]int) // column -> row
+	maxUnits := height * 8
+	for col := range annotations {
+		units := int(float64(totals[col]) * float64(maxUnits) / 100)
+		// Find the row where the peak ends (top of the bar)
+		peakRow := height - 1 - units/8
+		if peakRow < 0 {
+			peakRow = 0
+		}
+		peakRows[col] = peakRow
+	}
+
+	// Render rows
 	rows := make([]string, height)
 	for y := 0; y < height; y++ {
 		var row strings.Builder
-		for x := 0; x < width; x++ {
+		x := 0
+		for x < width {
+			// Check if there's an annotation starting here
+			label, hasLabel := annotations[x]
+			targetRow, inRow := peakRows[x]
+			if hasLabel && inRow && y == targetRow {
+				// Render the number
+				row.WriteString(dimStyle.Render(label))
+				x += len(label)
+				continue
+			}
+			// Regular cell
 			char, style := getCPUCell(padded[x], y, height)
 			row.WriteString(style.Render(string(char)))
+			x++
 		}
 		rows[y] = row.String()
 	}
 
 	return strings.Join(rows, "\n")
+}
+
+// findPeaks finds local maxima above minVal that are higher than neighbors by minDiff
+func findPeaks(data []int, minVal, minDiff int) []int {
+	var peaks []int
+	for i := 1; i < len(data)-1; i++ {
+		if data[i] >= minVal &&
+			data[i] > data[i-1]+minDiff &&
+			data[i] > data[i+1]+minDiff {
+			peaks = append(peaks, i)
+		}
+	}
+	return peaks
 }
 
 func getCPUCell(s CPUSample, row, totalRows int) (rune, lipgloss.Style) {
