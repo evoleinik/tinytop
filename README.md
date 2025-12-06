@@ -2,7 +2,7 @@
 
 Tiny terminal CPU monitor with Unicode graphics. Designed for small terminals over SSH.
 
-![tinytop screenshot](screenshot.png)
+<img src="screenshot.png" width="1348" height="534" alt="tinytop screenshot">
 
 ## Features
 
