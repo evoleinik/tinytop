@@ -6,8 +6,10 @@ Tiny terminal CPU monitor with Unicode graphics. Designed for small terminals ov
 
 ## Features
 
-- **CPU**: Stacked area chart - user (green), system (red), iowait (yellow), steal (magenta)
-- **Tokens**: Claude Code token usage - input (blue), output (cyan), cache read (gray), cache write (white)
+- **CPU**: Stacked area chart - user (green), system (red), iowait (yellow), steal (purple)
+- **Tokens**: Claude Code token usage - input/prompt (brown), output/response (cyan), cache (gray)
+- Plan 9-inspired color palette (muted acme colors)
+- Peak annotations showing CPU % at significant spikes
 - Unicode block characters for sub-character resolution
 - Adapts to terminal size
 - 1-second refresh rate (SSH-friendly)
@@ -53,13 +55,13 @@ Then run tinytop (listens on port 4317) and use Claude Code in another terminal.
 ## Platform Notes
 
 - **Linux**: Shows user, system, iowait, steal (reads `/proc/stat`)
-- **macOS**: Shows user, system (reads `kern.cp_time` via sysctl)
+- **macOS**: Shows user, system (reads via Mach API)
 
 ## AI Notes
 
 - `main.go` - UI and rendering
 - `cpu_linux.go` - Linux `/proc/stat` parsing
 - `cpu_darwin.go` - macOS Mach API
-- `otel.go` - OTLP HTTP receiver for Claude Code metrics
+- `otel.go` - OTLP gRPC receiver for Claude Code metrics
 - Uses Bubbletea for TUI, Lipgloss for styling
 - Chart uses `▁▂▃▄▅▆▇█` blocks for 8-level vertical resolution
