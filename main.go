@@ -13,21 +13,21 @@ import (
 // Block characters for rendering
 var blocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
-// Styles - CPU colors (Datadog-inspired)
+// Styles - CPU colors (Plan 9-inspired)
 var (
-	userStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("46"))  // bright green
-	systemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("196")) // bright red
-	iowaitStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("226")) // bright yellow
-	stealStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("201")) // magenta
+	userStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("28"))  // dark green (#006600)
+	systemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("124")) // dark red (#AA0000)
+	iowaitStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("186")) // pale yellow (#EEEE9E)
+	stealStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("104")) // purple-blue (#8888CC)
 	dimStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("240")) // gray
 )
 
-// Styles - Token colors
+// Styles - Token colors (Plan 9-inspired)
 var (
-	inputStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("208")) // orange (prompt)
-	outputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("35"))  // teal (response)
+	inputStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("130")) // muted brown (prompt)
+	outputStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("73"))  // muted cyan (response)
 	cacheRStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("245")) // gray
-	cacheWStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("255")) // white
+	cacheWStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")) // light gray
 )
 
 // CPUSample holds calculated CPU percentages
