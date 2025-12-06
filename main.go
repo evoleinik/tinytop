@@ -148,10 +148,10 @@ func (m model) View() string {
 	}
 
 	// Calculate heights for stacked layout
-	// CPU chart (header embedded) + Token header + Token chart + footer
-	// Minimum: 1 + 1 + 1 + 1 = 4 rows
+	// CPU chart (header+footer embedded in top row) + Token header + Token chart
+	// Minimum: 1 + 1 + 1 = 3 rows
 	tokChartHeight := 1                              // tokens are discrete, one line enough
-	cpuChartHeight := m.height - 2 - tokChartHeight // CPU gets the rest (-2 for tok header + footer)
+	cpuChartHeight := m.height - 1 - tokChartHeight // CPU gets the rest (-1 for tok header)
 	if cpuChartHeight < 1 {
 		cpuChartHeight = 1
 	}
@@ -169,7 +169,10 @@ func (m model) View() string {
 		iowaitStyle.Render("■") + dimStyle.Render("io ") +
 		stealStyle.Render("■") + dimStyle.Render("stl ")
 
-	cpuChart := renderCPUChart(m.cpuHistory, m.width, cpuChartHeight, cpuHeader)
+	// Right info (was footer): q:quit and time span
+	rightInfo := dimStyle.Render("q:quit " + formatDuration(m.width) + " ")
+
+	cpuChart := renderCPUChart(m.cpuHistory, m.width, cpuChartHeight, cpuHeader, rightInfo)
 
 	// Token section - show cumulative total, chart shows deltas over time
 	var tokTotal uint64
@@ -185,16 +188,7 @@ func (m model) View() string {
 
 	tokChart := renderTokenChart(m.tokenHistory, m.width, tokChartHeight)
 
-	// Footer
-	footer := dimStyle.Render(" q:quit")
-	span := formatDuration(m.width)
-	pad := m.width - 7 - len(span) - 1
-	if pad > 0 {
-		footer += strings.Repeat(" ", pad)
-	}
-	footer += dimStyle.Render(span + " ")
-
-	return cpuChart + "\n" + tokHeader + "\n" + tokChart + "\n" + footer
+	return cpuChart + "\n" + tokHeader + "\n" + tokChart
 }
 
 func formatCount(n uint64) string {
@@ -214,11 +208,12 @@ func formatDuration(seconds int) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
-func renderCPUChart(history []CPUSample, width, height int, header string) string {
+func renderCPUChart(history []CPUSample, width, height int, header, rightInfo string) string {
 	if height < 1 {
 		return ""
 	}
 	headerWidth := lipgloss.Width(header)
+	rightWidth := lipgloss.Width(rightInfo)
 
 	padded := make([]CPUSample, width)
 	start := width - len(history)
@@ -295,12 +290,17 @@ func renderCPUChart(history []CPUSample, width, height int, header string) strin
 	for y := 0; y < height; y++ {
 		var row strings.Builder
 		x := 0
-		// Embed header in top row
+		// Embed header in top row (left side)
 		if y == 0 && header != "" {
 			row.WriteString(header)
 			x = headerWidth
 		}
-		for x < width {
+		// Stop early on row 0 to leave room for right info
+		rowEnd := width
+		if y == 0 && rightInfo != "" {
+			rowEnd = width - rightWidth
+		}
+		for x < rowEnd {
 			// Check if there's an annotation starting here
 			label, hasLabel := annotations[x]
 			targetRow, inRow := peakRows[x]
@@ -314,6 +314,10 @@ func renderCPUChart(history []CPUSample, width, height int, header string) strin
 			char, style := getCPUCell(padded[x], y, height)
 			row.WriteString(style.Render(string(char)))
 			x++
+		}
+		// Add right info at end of top row
+		if y == 0 && rightInfo != "" {
+			row.WriteString(rightInfo)
 		}
 		rows[y] = row.String()
 	}
