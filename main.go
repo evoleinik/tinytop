@@ -41,6 +41,9 @@ type CPUSample struct {
 // Global OTEL receiver
 var otelReceiver *OTELReceiver
 
+// Available time scales (seconds per column)
+var scales = []int{1, 2, 5, 10, 30, 60}
+
 // model is the Bubbletea model
 type model struct {
 	cpuHistory   []CPUSample
@@ -49,6 +52,7 @@ type model struct {
 	prevToken    TokenSample
 	width        int
 	height       int
+	scale        int // seconds per column (index into scales)
 	err          error
 }
 
@@ -61,7 +65,7 @@ func main() {
 		otelReceiver.Start() // Ignore error, optional feature
 	}()
 
-	p := tea.NewProgram(model{}, tea.WithAltScreen())
+	p := tea.NewProgram(model{scale: 1}, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
@@ -84,6 +88,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "+", "=":
+			m.scale = nextScale(m.scale, 1) // zoom out
+		case "-", "_":
+			m.scale = nextScale(m.scale, -1) // zoom in
 		}
 
 	case tea.WindowSizeMsg:
@@ -102,9 +110,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			sample := calcPercentages(m.prevCPU, curr)
 			m.cpuHistory = append(m.cpuHistory, sample)
 
-			maxHist := m.width
-			if maxHist < 10 {
-				maxHist = 80
+			// Keep enough history for max zoom (60s per column)
+			maxHist := m.width * 60
+			if maxHist < 600 {
+				maxHist = 600
 			}
 			if len(m.cpuHistory) > maxHist {
 				m.cpuHistory = m.cpuHistory[len(m.cpuHistory)-maxHist:]
@@ -123,9 +132,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Add delta to history (even if zero - shows no activity)
 			m.tokenHistory = append(m.tokenHistory, delta)
-			maxHist := m.width
-			if maxHist < 10 {
-				maxHist = 80
+			// Keep enough history for max zoom (60s per column)
+			maxHist := m.width * 60
+			if maxHist < 600 {
+				maxHist = 600
 			}
 			if len(m.tokenHistory) > maxHist {
 				m.tokenHistory = m.tokenHistory[len(m.tokenHistory)-maxHist:]
@@ -156,6 +166,10 @@ func (m model) View() string {
 		cpuChartHeight = 1
 	}
 
+	// Aggregate history based on current scale
+	cpuAgg := aggregateCPU(m.cpuHistory, m.scale, m.width)
+	tokAgg := aggregateTokens(m.tokenHistory, m.scale)
+
 	// CPU section
 	var latestCPU CPUSample
 	if len(m.cpuHistory) > 0 {
@@ -169,10 +183,11 @@ func (m model) View() string {
 		iowaitStyle.Render("■") + dimStyle.Render("io ") +
 		stealStyle.Render("■") + dimStyle.Render("stl ")
 
-	// Right info (was footer): q:quit and time span
-	rightInfo := dimStyle.Render("q:quit " + formatDuration(m.width) + " ")
+	// Right info: q:quit, scale indicator, and time span
+	scaleInfo := fmt.Sprintf("%ds/col ", m.scale)
+	rightInfo := dimStyle.Render("q:quit +/- " + scaleInfo + formatDuration(m.width*m.scale) + " ")
 
-	cpuChart := renderCPUChart(m.cpuHistory, m.width, cpuChartHeight, cpuHeader, rightInfo)
+	cpuChart := renderCPUChart(cpuAgg, m.width, cpuChartHeight, cpuHeader, rightInfo)
 
 	// Token section - show cumulative total, chart shows deltas over time
 	var tokTotal uint64
@@ -186,7 +201,7 @@ func (m model) View() string {
 		cacheRStyle.Render("■") + dimStyle.Render("chr ") +
 		cacheWStyle.Render("■") + dimStyle.Render("chw")
 
-	tokChart := renderTokenChart(m.tokenHistory, m.width, tokChartHeight)
+	tokChart := renderTokenChart(tokAgg, m.width, tokChartHeight)
 
 	return cpuChart + "\n" + tokHeader + "\n" + tokChart
 }
@@ -206,6 +221,76 @@ func formatDuration(seconds int) string {
 		return fmt.Sprintf("%dm", seconds/60)
 	}
 	return fmt.Sprintf("%ds", seconds)
+}
+
+func nextScale(current, dir int) int {
+	idx := 0
+	for i, s := range scales {
+		if s == current {
+			idx = i
+			break
+		}
+	}
+	idx += dir
+	if idx < 0 {
+		idx = 0
+	}
+	if idx >= len(scales) {
+		idx = len(scales) - 1
+	}
+	return scales[idx]
+}
+
+func aggregateCPU(history []CPUSample, scale, width int) []CPUSample {
+	if scale <= 1 {
+		return history
+	}
+	result := make([]CPUSample, 0, len(history)/scale+1)
+	for i := 0; i < len(history); i += scale {
+		end := i + scale
+		if end > len(history) {
+			end = len(history)
+		}
+		chunk := history[i:end]
+		var sum CPUSample
+		for _, s := range chunk {
+			sum.User += s.User
+			sum.System += s.System
+			sum.IOWait += s.IOWait
+			sum.Steal += s.Steal
+		}
+		n := float64(len(chunk))
+		result = append(result, CPUSample{
+			User:   sum.User / n,
+			System: sum.System / n,
+			IOWait: sum.IOWait / n,
+			Steal:  sum.Steal / n,
+		})
+	}
+	return result
+}
+
+func aggregateTokens(history []TokenSample, scale int) []TokenSample {
+	if scale <= 1 {
+		return history
+	}
+	result := make([]TokenSample, 0, len(history)/scale+1)
+	for i := 0; i < len(history); i += scale {
+		end := i + scale
+		if end > len(history) {
+			end = len(history)
+		}
+		chunk := history[i:end]
+		var sum TokenSample
+		for _, s := range chunk {
+			sum.Input += s.Input
+			sum.Output += s.Output
+			sum.CacheRead += s.CacheRead
+			sum.CacheWrite += s.CacheWrite
+		}
+		result = append(result, sum)
+	}
+	return result
 }
 
 func renderCPUChart(history []CPUSample, width, height int, header, rightInfo string) string {
