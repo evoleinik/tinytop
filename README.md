@@ -40,7 +40,7 @@ Keys:
 
 ## Vercel Deployment Tracking
 
-To track Vercel deployments:
+Tracks Vercel deployments with colored markers. Auto-detects project from `.vercel/project.json` in current directory, or set explicitly:
 
 ```bash
 export TINYTOP_VERCEL_PROJECT=yourproject

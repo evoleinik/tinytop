@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -11,6 +12,21 @@ import (
 )
 
 const vercelProjectEnv = "TINYTOP_VERCEL_PROJECT"
+
+// detectVercelProject reads project name from .vercel/project.json
+func detectVercelProject() string {
+	data, err := os.ReadFile(".vercel/project.json")
+	if err != nil {
+		return ""
+	}
+	var proj struct {
+		ProjectName string `json:"projectName"`
+	}
+	if json.Unmarshal(data, &proj) != nil {
+		return ""
+	}
+	return proj.ProjectName
+}
 
 // Block characters for rendering
 var blocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
@@ -78,8 +94,11 @@ func main() {
 		otelReceiver.Start() // Ignore error, optional feature
 	}()
 
-	// Start Vercel poller if project configured
+	// Start Vercel poller if project configured (env var or auto-detect)
 	if project := os.Getenv(vercelProjectEnv); project != "" {
+		vercelPoller = NewVercelPoller(project)
+		vercelPoller.Start()
+	} else if project := detectVercelProject(); project != "" {
 		vercelPoller = NewVercelPoller(project)
 		vercelPoller.Start()
 	}
