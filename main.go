@@ -84,7 +84,7 @@ func main() {
 		vercelPoller.Start()
 	}
 
-	p := tea.NewProgram(model{scale: 1}, tea.WithAltScreen())
+	p := tea.NewProgram(model{scale: 60}, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
