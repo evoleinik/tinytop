@@ -10,6 +10,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const vercelProjectEnv = "TINYTOP_VERCEL_PROJECT"
+
 // Block characters for rendering
 var blocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
@@ -30,6 +32,13 @@ var (
 	cacheWStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("252")) // light gray
 )
 
+// Styles - Vercel deployment colors
+var (
+	buildingStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("214")) // yellow/orange
+	readyStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("28"))  // green
+	errorStyle    = lipgloss.NewStyle().Foreground(lipgloss.Color("124")) // red
+)
+
 // CPUSample holds calculated CPU percentages
 type CPUSample struct {
 	User   float64
@@ -41,19 +50,23 @@ type CPUSample struct {
 // Global OTEL receiver
 var otelReceiver *OTELReceiver
 
+// Global Vercel poller (nil if not configured)
+var vercelPoller *VercelPoller
+
 // Available time scales (seconds per column)
 var scales = []int{1, 2, 5, 10, 30, 60}
 
 // model is the Bubbletea model
 type model struct {
-	cpuHistory   []CPUSample
-	tokenHistory []TokenSample
-	prevCPU      cpuRaw
-	prevToken    TokenSample
-	width        int
-	height       int
-	scale        int // seconds per column (index into scales)
-	err          error
+	cpuHistory    []CPUSample
+	tokenHistory  []TokenSample
+	deployHistory []DeploymentEvent
+	prevCPU       cpuRaw
+	prevToken     TokenSample
+	width         int
+	height        int
+	scale         int // seconds per column (index into scales)
+	err           error
 }
 
 type tickMsg time.Time
@@ -64,6 +77,12 @@ func main() {
 	go func() {
 		otelReceiver.Start() // Ignore error, optional feature
 	}()
+
+	// Start Vercel poller if project configured
+	if project := os.Getenv(vercelProjectEnv); project != "" {
+		vercelPoller = NewVercelPoller(project)
+		vercelPoller.Start()
+	}
 
 	p := tea.NewProgram(model{scale: 1}, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
@@ -143,6 +162,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prevToken = curr
 		}
 
+		// Update Vercel deployment events
+		if vercelPoller != nil {
+			m.deployHistory = vercelPoller.GetEvents()
+		}
+
 		return m, tick()
 	}
 	return m, nil
@@ -158,10 +182,13 @@ func (m model) View() string {
 	}
 
 	// Calculate heights for stacked layout
-	// CPU chart (header+footer embedded in top row) + Token header + Token chart
-	// Minimum: 1 + 1 + 1 = 3 rows
-	tokChartHeight := 1                              // tokens are discrete, one line enough
-	cpuChartHeight := m.height - 1 - tokChartHeight // CPU gets the rest (-1 for tok header)
+	// CPU chart + (optional Vercel row) + Token header + Token chart
+	tokChartHeight := 1 // tokens are discrete, one line enough
+	vclRowHeight := 0
+	if vercelPoller != nil {
+		vclRowHeight = 1
+	}
+	cpuChartHeight := m.height - 1 - tokChartHeight - vclRowHeight // CPU gets the rest
 	if cpuChartHeight < 1 {
 		cpuChartHeight = 1
 	}
@@ -203,6 +230,11 @@ func (m model) View() string {
 
 	tokChart := renderTokenChart(tokAgg, m.width, tokChartHeight)
 
+	// Vercel section (optional) - below tokens
+	if vercelPoller != nil {
+		vclRow := renderVercelEvents(m.deployHistory, m.width, m.scale)
+		return cpuChart + "\n" + tokHeader + "\n" + tokChart + "\n" + vclRow
+	}
 	return cpuChart + "\n" + tokHeader + "\n" + tokChart
 }
 
@@ -535,4 +567,47 @@ func getTokenCell(s TokenSample, row, totalRows int, maxTokens uint64) (rune, li
 	}
 
 	return blocks[fill], style
+}
+
+func renderVercelEvents(events []DeploymentEvent, width, scale int) string {
+	header := " VCL "
+	headerWidth := len(header)
+
+	var row strings.Builder
+	row.WriteString(dimStyle.Render(header))
+
+	now := time.Now()
+	for x := headerWidth; x < width; x++ {
+		// Calculate time range for this column
+		colAge := (width - 1 - x) * scale // seconds ago for this column
+		colStart := now.Add(-time.Duration(colAge+scale) * time.Second)
+		colEnd := now.Add(-time.Duration(colAge) * time.Second)
+
+		// Find if any event falls in this time bucket
+		var marker rune = ' '
+		var style lipgloss.Style
+		for _, e := range events {
+			if (e.Time.After(colStart) && e.Time.Before(colEnd)) || e.Time.Equal(colEnd) {
+				switch e.State {
+				case DeployBuilding, DeployQueued:
+					marker = '▌'
+					style = buildingStyle
+				case DeployReady:
+					marker = '▌'
+					style = readyStyle
+				case DeployError:
+					marker = '▌'
+					style = errorStyle
+				}
+			}
+		}
+
+		if marker == ' ' {
+			row.WriteRune(' ')
+		} else {
+			row.WriteString(style.Render(string(marker)))
+		}
+	}
+
+	return row.String()
 }

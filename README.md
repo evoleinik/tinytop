@@ -8,6 +8,7 @@ Tiny terminal CPU monitor with Unicode graphics. Designed for small terminals ov
 
 - **CPU**: Stacked area chart - user (green), system (red), iowait (yellow), steal (purple)
 - **Tokens**: Claude Code token usage - input/prompt (brown), output/response (cyan), cache (gray)
+- **Vercel**: Deployment event markers - building (yellow), ready (green), error (red)
 - Plan 9-inspired color palette (muted acme colors)
 - Peak annotations showing CPU % at significant spikes
 - Variable time scales: 1s, 2s, 5s, 10s, 30s, 60s per column
@@ -36,6 +37,19 @@ Keys:
 - `q` or `Ctrl+C` - quit
 - `+` - zoom out (more time per column)
 - `-` - zoom in (less time per column)
+
+## Vercel Deployment Tracking
+
+To track Vercel deployments:
+
+```bash
+export TINYTOP_VERCEL_PROJECT=yourproject
+```
+
+Requires Vercel CLI installed and authenticated (`vercel login`). Shows colored markers:
+- Yellow: Building/Queued
+- Green: Ready (success)
+- Red: Error (failed)
 
 ## Claude Code Token Tracking
 
@@ -67,5 +81,6 @@ Then run tinytop (listens on port 4317) and use Claude Code in another terminal.
 - `cpu_linux.go` - Linux `/proc/stat` parsing
 - `cpu_darwin.go` - macOS Mach API
 - `otel.go` - OTLP gRPC receiver for Claude Code metrics
+- `vercel.go` - Vercel CLI poller for deployment status
 - Uses Bubbletea for TUI, Lipgloss for styling
 - Chart uses `▁▂▃▄▅▆▇█` blocks for 8-level vertical resolution
